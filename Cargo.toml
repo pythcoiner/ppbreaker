@@ -1,10 +1,14 @@
 [package]
-name = "passphrase_breaker"
+name = "ppbreaker"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "ppbreaker"
+path = "src/bin/cli.rs"
 
 [dependencies]
 bitcoin = "0.31.1"
 bip39 = "2.0.0"
+clap = { version = "4.4.7", features = ["derive"]}
+serde_json = "1.0.111"
