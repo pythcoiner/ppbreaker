@@ -1,0 +1,10 @@
+[package]
+name = "passphrase_breaker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitcoin = "0.31.1"
+bip39 = "2.0.0"
