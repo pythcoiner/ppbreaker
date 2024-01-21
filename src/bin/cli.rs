@@ -42,7 +42,7 @@ impl FromStr for AddressType {
     }
 }
 
-/// ppbreaker is a simple CLI tool for Bitcoin users who have lost their wallet's passphrase but still
+/// ppfinder is a simple CLI tool for Bitcoin users who have lost their wallet's passphrase but still
 /// have their mnemonic words and at least a known address. It helps to recover the passphrase by trying different
 /// combinations based on the provided mnemonic words. The tool supports customizing the derivation path,
 /// address type, and index. Users can input mnemonic words directly or via a file, and specify the number of processes.
