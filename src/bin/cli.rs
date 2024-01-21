@@ -1,13 +1,13 @@
 extern crate bip39;
 extern crate bitcoin;
 
-extern crate ppbreaker;
+extern crate ppfinder;
 
 use bip39::Mnemonic;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::bip32::DerivationPath;
 use bitcoin::Address;
-use ppbreaker::{CustomError, MatchResult, PassphraseFinder};
+use ppfinder::{CustomError, MatchResult, PassphraseFinder};
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};

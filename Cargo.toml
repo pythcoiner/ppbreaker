@@ -1,10 +1,10 @@
 [package]
-name = "ppbreaker"
+name = "ppfinder"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "ppbreaker"
+name = "ppfinder"
 path = "src/bin/cli.rs"
 
 [dependencies]
