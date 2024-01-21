@@ -14,7 +14,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::sync::mpsc;
-use std::{env, io, thread};
+use std::{env, fs, io, thread};
 use std::time::SystemTime;
 
 pub enum MatchResult {
@@ -360,13 +360,15 @@ impl PassphraseFinder {
                     s.total_pp,
                     (s.total_pp as f64 / s.total_pp as f64) * 100.0
                 );
-
+                self.cleanup()?;
                 Ok(DoNotMatch)
             } else {
                 self.kill_processes();
                 if let Some(pp) = &self.pp {
+                    self.cleanup()?;
                     Ok(Match(pp.clone()))
                 } else {
+                    self.cleanup()?;
                     Ok(DoNotMatch)
                 }
             }
@@ -526,6 +528,16 @@ impl PassphraseFinder {
             }
             println!("All workers have stopped.");
         }
+    }
+
+    fn cleanup(&self) -> Result<(), CustomError>{
+        if let Some(workers) = &self.workers {
+            for i in 0..workers.len() {
+                let path = format!("worker_{}.pp", i.to_string());
+                fs::remove_file(&path).map_err(|_| CustomError::CannotRemoveFile(path))?;
+            }
+        }
+        Ok(())
     }
 
     fn estimate_eta(&self, elapsed: f64) -> Option<Eta> {

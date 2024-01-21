@@ -21,6 +21,7 @@ pub enum CustomError {
     CannotParseWorkerMsg,
     CannotParseUSize,
     CannotTakeStdout,
+    CannotRemoveFile(String),
 }
 
 impl fmt::Display for CustomError {
@@ -53,6 +54,7 @@ impl fmt::Display for CustomError {
             CustomError::CannotParseWorkerMsg => write!(f, "Cannot parse message from worker"),
             CustomError::CannotParseUSize => write!(f, "Cannot parse usize from string"),
             CustomError::CannotTakeStdout => write!(f, "Cannot take stdout from worker"),
+            CustomError::CannotRemoveFile(file) => write!(f, "Cannot remove file {}", file),
             _ => write!(f, "Unimplemented error!"),
         }
     }
