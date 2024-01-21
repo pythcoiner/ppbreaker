@@ -2,19 +2,20 @@ extern crate bip39;
 extern crate bitcoin;
 mod errors;
 
-use std::{env, io, thread};
-use std::fs::File;
-use std::process::{Child, Command, Stdio};
-use std::io::{BufRead, BufReader, Write};
+use crate::MatchResult::{DoNotMatch, Match};
 use bip39::Mnemonic;
 use bitcoin::bip32::{ChildNumber, DerivationPath, Xpub};
 use bitcoin::secp256k1::{All, Secp256k1};
 use bitcoin::{bip32, Address, Network};
-use std::str::FromStr;
-use std::sync::mpsc;
 pub use errors::CustomError;
 use regex::Regex;
-use crate::MatchResult::{DoNotMatch, Match};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, Command, Stdio};
+use std::str::FromStr;
+use std::sync::mpsc;
+use std::{env, io, thread};
+use std::time::SystemTime;
 
 pub enum MatchResult {
     Match(String),
@@ -24,8 +25,15 @@ pub enum MatchResult {
 }
 
 enum WorkerMsg {
-    Progress { id: usize, actual_pp: usize, total_pp: usize },
-    Found { id: usize, passphrase: String },
+    Progress {
+        id: usize,
+        actual_pp: usize,
+        total_pp: usize,
+    },
+    Found {
+        id: usize,
+        passphrase: String,
+    },
     Raw(String),
     Ended,
 }
@@ -33,6 +41,13 @@ enum WorkerMsg {
 struct GlobalStatus {
     actual_pp: usize,
     total_pp: usize,
+}
+
+struct Eta {
+    days: u32,
+    hours: u32,
+    minutes: u32,
+    seconds: u32,
 }
 
 struct WorkerStatus {
@@ -43,7 +58,6 @@ struct WorkerStatus {
 }
 
 impl WorkerStatus {
-
     pub fn new(id: usize) -> Self {
         WorkerStatus {
             total_pp: 0,
@@ -62,7 +76,11 @@ impl WorkerStatus {
 
     fn update(&mut self, msg: WorkerMsg) {
         match msg {
-            WorkerMsg::Progress { id, actual_pp, total_pp } => {
+            WorkerMsg::Progress {
+                id,
+                actual_pp,
+                total_pp,
+            } => {
                 self.actual_pp = actual_pp;
                 self.total_pp = total_pp;
             }
@@ -86,6 +104,7 @@ pub struct PassphraseFinder {
     rx: Option<mpsc::Receiver<String>>,
     found: bool,
     pp: Option<String>,
+    start_time: Option<SystemTime>,
 }
 
 impl PassphraseFinder {
@@ -111,7 +130,7 @@ impl PassphraseFinder {
         } else {
             let mut ws: Vec<WorkerStatus> = Vec::new();
             for i in 0..proc {
-                let status = WorkerStatus{
+                let status = WorkerStatus {
                     total_pp: 0,
                     actual_pp: 0,
                     state: MatchResult::Iddle,
@@ -137,17 +156,17 @@ impl PassphraseFinder {
             rx: None,
             found: false,
             pp: None,
+            start_time: None,
         };
 
         ppf
     }
 
     fn mnemonic_to_xpub(&self, mnemonic: &Mnemonic, passphrase: &str) -> Result<Xpub, CustomError> {
-        let xpriv =
-            bip32::Xpriv::new_master(Network::Bitcoin, &mnemonic.to_seed(passphrase))
-                .map_err(|_| CustomError::XPrivError)?
-                .derive_priv(&self.secp, &self.derivation_path)
-                .map_err(|_| CustomError::DeriveError)?;
+        let xpriv = bip32::Xpriv::new_master(Network::Bitcoin, &mnemonic.to_seed(passphrase))
+            .map_err(|_| CustomError::XPrivError)?
+            .derive_priv(&self.secp, &self.derivation_path)
+            .map_err(|_| CustomError::DeriveError)?;
 
         Ok(Xpub::from_priv(&self.secp, &xpriv))
     }
@@ -160,14 +179,13 @@ impl PassphraseFinder {
 
     fn check_passphrase(&self, passphrase: &String) -> Result<bool, CustomError> {
         let xpub = self.mnemonic_to_xpub(&self.mnemonic, passphrase)?;
-        for i in &self.indexes{
+        for i in &self.indexes {
             let address = &self.get_address(&xpub, i.to_owned())?;
             if address == &self.address {
                 return Ok(true);
             }
-        };
+        }
         Ok(false)
-
     }
 
     pub fn start(&mut self) -> Result<MatchResult, CustomError> {
@@ -182,7 +200,7 @@ impl PassphraseFinder {
     /// Start this process as a worker
     fn standalone_start(&self) -> Result<MatchResult, CustomError> {
         let total = self.passphrases.len();
-        if let Some(id) = self.id{
+        if let Some(id) = self.id {
             println!("[{}]0/{}", id.to_string(), total.to_string());
         } else {
             println!("0/{} passphrases checked...", total.to_string());
@@ -196,32 +214,45 @@ impl PassphraseFinder {
                 return Ok(Match(p.clone()));
             }
 
-            if idx % 10 == 0 {
-                if let Some(id) = self.id{
-                    println!("[{}]{}/{}", id.to_string(), idx.to_string(), total.to_string());
+            if idx % 1000 == 0 {
+                if let Some(id) = self.id {
+                    println!(
+                        "[{}]{}/{}",
+                        id.to_string(),
+                        idx.to_string(),
+                        total.to_string()
+                    );
                 } else {
                     // print!("\x1B[1A\x1B[K");
-                    println!("{}/{}({:.2}%) passphrases checked...", idx, total, (idx as f64 / total as f64) * 100.0);
+                    println!(
+                        "{}/{}({:.2}%) passphrases checked...",
+                        idx,
+                        total,
+                        (idx as f64 / total as f64) * 100.0
+                    );
                 };
             }
         }
-        if let Some(id) = self.id{
-            println!("[{}]{}/{}", id.to_string(), total.to_string(), total.to_string());
+        if let Some(id) = self.id {
+            println!(
+                "[{}]{}/{}",
+                id.to_string(),
+                total.to_string(),
+                total.to_string()
+            );
         } else {
-            println!("{}/{}(100%) passphrases checked...", total, total, );
+            println!("{}/{}(100%) passphrases checked...", total, total,);
         };
-
 
         Ok(DoNotMatch)
     }
 
     /// Create several worker and start them, the actual process will only manage this workers
-    fn split_and_start(&mut self) -> Result<(), CustomError>{
-
+    fn split_and_start(&mut self) -> Result<(), CustomError> {
         if let Some(workers) = &mut self.workers {
             let args: Vec<String> = env::args().collect();
             let binary = format!("./{}", &args[0]);
-            let mut files : Vec<String> = Vec::new();
+            let mut files: Vec<String> = Vec::new();
 
             println!("Splitting jobs in {} workers...", self.proc.to_string());
 
@@ -231,11 +262,12 @@ impl PassphraseFinder {
                 // write each chunk in a new file
                 let path = format!("worker_{}.pp", i.to_string());
                 files.push(path.clone());
-                let mut file = File::create(&path)
-                    .map_err(|_| CustomError::CannotWriteFile(path.clone()))?;
+                let mut file =
+                    File::create(&path).map_err(|_| CustomError::CannotWriteFile(path.clone()))?;
 
                 for s in chunk {
-                    writeln!(file, "{}", s).map_err(|_| CustomError::CannotWriteFile(path.clone()))?;
+                    writeln!(file, "{}", s)
+                        .map_err(|_| CustomError::CannotWriteFile(path.clone()))?;
                 }
 
                 print!("[{}] ", i);
@@ -243,12 +275,16 @@ impl PassphraseFinder {
             }
             println!(" ");
             print!("\x1B[1A\x1B[K");
+            print!("\x1B[1A\x1B[K");
             println!("Starting workers...");
 
             // preparing channel
             let (tx, rx) = mpsc::channel();
             self.rx = Some(rx);
 
+            self.start_time = Some(SystemTime::now());
+
+            // Strart all subprocesses
             for (i, f) in files.iter().enumerate() {
                 let mut child = Command::new(&binary)
                     .stdout(Stdio::piped())
@@ -264,11 +300,14 @@ impl PassphraseFinder {
                     .arg(f)
                     .arg("-w")
                     .arg(i.to_string())
-                    .spawn().map_err(|_| CustomError::FailStartWorker)?;
-
+                    .spawn()
+                    .map_err(|_| CustomError::FailStartWorker)?;
 
                 let tx = tx.clone();
-                let stdout = child.stdout.take().expect("Child did not have a handle to stdout");
+                let stdout = child
+                    .stdout
+                    .take()
+                    .expect("Child did not have a handle to stdout");
 
                 // Thread to 'map' stdout to mpsc::channel
                 thread::spawn(move || {
@@ -283,7 +322,7 @@ impl PassphraseFinder {
 
                 print!("[{}] ", i);
                 io::stdout().flush().unwrap();
-            };
+            }
             println!(" ");
 
             drop(tx); // Close the spare sending part of the channel, other tx sides are not closed here
@@ -298,22 +337,30 @@ impl PassphraseFinder {
 
     /// Monitor workers until they all stopped
     fn monitor_workers(&mut self) -> Result<MatchResult, CustomError> {
-
         if let Some(rx) = self.rx.take() {
+            print!("\x1B[1A\x1B[K");
 
             // this is blocking until all tx end are not closed
             // every tx will be closed when its emitting process will stop
             for received in rx {
                 let stop_listening = self.handle_worker_msg(received)?;
-                if  stop_listening || self.found {
+                if stop_listening || self.found {
                     break;
                 }
             }
 
             if !&self.found {
                 let s = &self.get_global_status();
+
+
                 print!("\x1B[1A\x1B[K");
-                println!("{}/{}({:.2}%) passphrases checked...", s.total_pp, s.total_pp, (s.total_pp as f64 / s.total_pp as f64) * 100.0);
+                println!(
+                    "{}/{}({:.2}%) passphrases checked...",
+                    s.total_pp,
+                    s.total_pp,
+                    (s.total_pp as f64 / s.total_pp as f64) * 100.0
+                );
+
                 Ok(DoNotMatch)
             } else {
                 self.kill_processes();
@@ -325,26 +372,20 @@ impl PassphraseFinder {
             }
 
             // TODO: cleanup worker_<id>.pp files
-
-
         } else {
             Err(CustomError::NoWorkers)
         }
     }
 
     fn parse_msg(&self, input: &str) -> Result<WorkerMsg, CustomError> {
-        let re1 = Regex::new(r"^\[(\d+)\](\d+)/(\d+)$")
-            .expect("static regex cannot fail");
-        let re2 = Regex::new(r"^\[(\d+)\]found:(.+)$")
-            .expect("static regex cannot fail");
-        let re3 = Regex::new(r"^\[\d+\].*$")
-            .expect("static regex cannot fail");
+        let re1 = Regex::new(r"^\[(\d+)\](\d+)/(\d+)$").expect("static regex cannot fail");
+        let re2 = Regex::new(r"^\[(\d+)\]found:(.+)$").expect("static regex cannot fail");
+        let re3 = Regex::new(r"^\[\d+\].*$").expect("static regex cannot fail");
 
         if let Some(data) = re1.captures(input) {
             if &data[2] != &data[3] {
                 Ok(WorkerMsg::Progress {
-                    id: usize::from_str(&data[1])
-                        .map_err(|_| CustomError::CannotParseUSize)?,
+                    id: usize::from_str(&data[1]).map_err(|_| CustomError::CannotParseUSize)?,
                     actual_pp: usize::from_str(&data[2])
                         .map_err(|_| CustomError::CannotParseUSize)?,
                     total_pp: usize::from_str(&data[3])
@@ -355,23 +396,20 @@ impl PassphraseFinder {
             }
         } else if let Some(data) = re2.captures(input) {
             Ok(WorkerMsg::Found {
-                id: usize::from_str(&data[1])
-                    .map_err(|_| CustomError::CannotParseUSize)?,
+                id: usize::from_str(&data[1]).map_err(|_| CustomError::CannotParseUSize)?,
                 passphrase: data[2].to_string(),
             })
         } else if let Some(data) = re3.captures(input) {
             println!("Raw.....................................");
-            Ok(WorkerMsg::Raw(input.to_string())
-            )
+            Ok(WorkerMsg::Raw(input.to_string()))
         } else {
             println!("Cannot parse worker msg input={}", input);
             Err(CustomError::CannotParseWorkerMsg)
         }
     }
 
-    fn handle_worker_msg(&mut self, msg: String) -> Result<bool, CustomError>{
-
-        let msg =   self.parse_msg(&msg)?;
+    fn handle_worker_msg(&mut self, msg: String) -> Result<bool, CustomError> {
+        let msg = self.parse_msg(&msg)?;
         self.update_worker_status(msg);
 
         // return true to stop listening subprocesses
@@ -384,24 +422,44 @@ impl PassphraseFinder {
 
     fn update_worker_status(&mut self, msg: WorkerMsg) {
         match msg {
-            WorkerMsg::Progress { id, actual_pp, total_pp } => {
+            WorkerMsg::Progress {
+                id,
+                actual_pp,
+                total_pp,
+            } => {
                 if let Some(workers_status) = &mut self.workers_status {
                     workers_status[id].update(msg);
                 }
                 let s = self.get_global_status();
+                let eta = self.estimate_eta(((s.actual_pp as f64 / s.total_pp as f64)));
                 print!("\x1B[1A\x1B[K");
-                println!("{}/{}({:.2}%) passphrases checked...", s.actual_pp, s.total_pp, (s.actual_pp as f64 / s.total_pp as f64) * 100.0);
-            },
+                if let Some(eta) = eta {
+                    println!(
+                        "{}/{}({:.2}%) passphrases checked... (ETA in {}days, {}hours, {}minutes, {}seconds...", s.actual_pp,
+                        s.total_pp,
+                        (s.actual_pp as f64 / s.total_pp as f64) * 100.0,
+                        eta.days,
+                        eta.hours,
+                        eta.minutes,
+                        eta.seconds
+                    );
+                } else {
+                    println!(
+                        "{}/{}({:.2}%) passphrases checked...",
+                        s.actual_pp,
+                        s.total_pp,
+                        (s.actual_pp as f64 / s.total_pp as f64) * 100.0
+                    );
+                }
+            }
 
-            WorkerMsg::Found {id, passphrase} => {
-
+            WorkerMsg::Found { id, passphrase } => {
                 // println!("Passphrase found '{}'", passphrase);
                 self.found = true;
                 self.pp = Some(passphrase);
 
                 // TODO: write found pp into file
-
-            },
+            }
             _ => {}
         }
     }
@@ -414,25 +472,31 @@ impl PassphraseFinder {
                 actual += w.actual_pp;
                 total += w.total_pp;
             }
-            GlobalStatus {actual_pp: actual, total_pp: total}
+            GlobalStatus {
+                actual_pp: actual,
+                total_pp: total,
+            }
         } else {
-            GlobalStatus {actual_pp: 0, total_pp: 0}
+            GlobalStatus {
+                actual_pp: 0,
+                total_pp: 0,
+            }
         }
-
-
     }
 
     fn check_workers_status(&mut self) -> Option<WorkerMsg> {
-
         if let Some(status) = &self.workers_status {
-            for s in  status.iter() {
+            for s in status.iter() {
                 match &s.state {
                     Match(pp) => {
-                        return Some(WorkerMsg::Found { id: s.id, passphrase: pp.clone() });
-                    },
+                        return Some(WorkerMsg::Found {
+                            id: s.id,
+                            passphrase: pp.clone(),
+                        });
+                    }
                     _ => {}
                 }
-            };
+            }
         };
         // TODO: else if all workers stopped return
         // Some(WorkerMsg::Ended)
@@ -461,6 +525,34 @@ impl PassphraseFinder {
                 _ = worker.wait();
             }
             println!("All workers have stopped.");
+        }
+    }
+
+    fn estimate_eta(&self, elapsed: f64) -> Option<Eta> {
+        if let Some(start) = self.start_time {
+            let duration =SystemTime::now()
+                .duration_since(start)
+                .unwrap()
+                .as_secs_f64();
+            let eta = ((1.0 / elapsed) * duration) - duration;
+            let mut eta = eta as u32;;
+
+            let days = eta / 86_400;
+            eta -= days * 86_400;
+            let hours = eta / 3600;
+            eta -= hours * 3600;
+            let minutes = eta / 60;
+            let seconds = eta - (minutes * 60);
+            Some (
+                Eta {
+                    days,
+                    hours,
+                    minutes,
+                    seconds
+                }
+            )
+        } else {
+            None
         }
     }
 }

@@ -7,14 +7,13 @@ use bip39::Mnemonic;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::bip32::DerivationPath;
 use bitcoin::Address;
-use ppbreaker::{PassphraseFinder, CustomError, MatchResult};
+use ppbreaker::{CustomError, MatchResult, PassphraseFinder};
+use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::str::FromStr;
-use std::{env};
 
 use clap::Parser;
-
 
 #[derive(Debug, Clone)]
 enum AddressType {
@@ -86,8 +85,6 @@ struct Cli {
     /// Worker id, used when called by main instance as a subprocess worker
     #[arg(short = 'w', long)]
     worker: Option<usize>,
-
-
     // #[command(subcommand)]
     // command: Commands,
 }
@@ -214,11 +211,15 @@ fn parse_derivation_path(
     DerivationPath::from_str(&path).map_err(|_| CustomError::WrongDerivationPath)
 }
 
-fn parse_passphrases(passphrase_dictionary: String, mute: bool) -> Result<Vec<String>, CustomError> {
+fn parse_passphrases(
+    passphrase_dictionary: String,
+    mute: bool,
+) -> Result<Vec<String>, CustomError> {
     let mut passphrases: Vec<String> = Vec::new();
     let file = get_file_handle(&passphrase_dictionary)?;
-    if !mute{
+    if !mute {
         println!("Loading passphrases:");
+        print!("\x1B[1A\x1B[K");
         println!("0 passphrases loaded...");
     }
 
@@ -268,7 +269,7 @@ fn main() -> Result<(), String> {
         worker_id,
     );
 
-    return if let MatchResult::Match(pp) = ppb.start()?{
+    return if let MatchResult::Match(pp) = ppb.start()? {
         if worker_id.is_none() {
             println!("Passphrase found: {pp}");
         }
@@ -280,5 +281,4 @@ fn main() -> Result<(), String> {
         }
         Ok(())
     };
-
 }
