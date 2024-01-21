@@ -11,7 +11,7 @@ use ppbreaker::{PassphraseFinder, CustomError, MatchResult};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::str::FromStr;
-use std::{env, fmt};
+use std::{env};
 
 use clap::Parser;
 
@@ -81,7 +81,13 @@ struct Cli {
 
     /// Number of processes to launch.
     #[arg(short = 'k', long, default_value = "1")]
-    processes: u8,
+    processes: usize,
+
+    /// Worker id, used when called by main instance as a subprocess worker
+    #[arg(short = 'w', long)]
+    worker: Option<usize>,
+
+
     // #[command(subcommand)]
     // command: Commands,
 }
@@ -208,22 +214,30 @@ fn parse_derivation_path(
     DerivationPath::from_str(&path).map_err(|_| CustomError::WrongDerivationPath)
 }
 
-fn parse_passphrases(passphrase_dictionary: String) -> Result<Vec<String>, CustomError> {
+fn parse_passphrases(passphrase_dictionary: String, mute: bool) -> Result<Vec<String>, CustomError> {
     let mut passphrases: Vec<String> = Vec::new();
-    let mut file = get_file_handle(&passphrase_dictionary)?;
-    println!("Loading passphrases:");
-    println!("0 passphrases loaded...");
+    let file = get_file_handle(&passphrase_dictionary)?;
+    if !mute{
+        println!("Loading passphrases:");
+        println!("0 passphrases loaded...");
+    }
+
     for line in file.lines() {
-        // TODO: trim EOL char (only last char)
         if line.is_ok() {
             passphrases.push(line.unwrap());
             if passphrases.len() % 10_000 == 0 {
-                print!("\x1B[1A\x1B[K");
-                println!("{} passphrases loaded...", passphrases.len());
+                if !mute {
+                    print!("\x1B[1A\x1B[K");
+                    println!("{} passphrases loaded...", passphrases.len());
+                }
             }
         }
     }
-    println!("Loaded {} passphrases!", passphrases.len());
+    if !mute {
+        print!("\x1B[1A\x1B[K");
+        println!("Loaded {} passphrases!", passphrases.len());
+    }
+
     Ok(passphrases)
 }
 
@@ -240,22 +254,30 @@ fn main() -> Result<(), String> {
 
     let index = parse_index(&cli.index)?;
 
-    let passphrases = parse_passphrases(cli.passphrase_dictionary)?;
+    let passphrases = parse_passphrases(cli.passphrase_dictionary, cli.worker.is_some())?;
 
-    let ppb = PassphraseFinder::new(
+    let worker_id = cli.worker;
+
+    let mut ppb = PassphraseFinder::new(
         address,
         mnemonic,
         derivation_path,
         passphrases,
         index,
         cli.processes,
+        worker_id,
     );
 
     return if let MatchResult::Match(pp) = ppb.start()?{
-        println!("Passphrase found!: {pp}");
-        return Ok(());
+        if worker_id.is_none() {
+            println!("Passphrase found: {pp}");
+        }
+        // TODO: write result into a file 'pp.found'
+        Ok(())
     } else {
-        println!("Passphrase not found!");
+        if worker_id.is_none() {
+            println!("Passphrase not found!");
+        }
         Ok(())
     };
 

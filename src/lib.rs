@@ -2,27 +2,90 @@ extern crate bip39;
 extern crate bitcoin;
 mod errors;
 
+use std::{env, io, thread};
+use std::fs::File;
+use std::process::{Child, Command, Stdio};
+use std::io::{BufRead, BufReader, Write};
 use bip39::Mnemonic;
 use bitcoin::bip32::{ChildNumber, DerivationPath, Xpub};
 use bitcoin::secp256k1::{All, Secp256k1};
 use bitcoin::{bip32, Address, Network};
 use std::str::FromStr;
+use std::sync::mpsc;
 pub use errors::CustomError;
+use regex::Regex;
 use crate::MatchResult::{DoNotMatch, Match};
 
 pub enum MatchResult {
     Match(String),
     DoNotMatch,
+    Running,
+    Iddle,
+}
+
+enum WorkerMsg {
+    Progress { id: usize, actual_pp: usize, total_pp: usize },
+    Found { id: usize, passphrase: String },
+    Raw(String),
+    Ended,
+}
+
+struct GlobalStatus {
+    actual_pp: usize,
+    total_pp: usize,
+}
+
+struct WorkerStatus {
+    total_pp: usize,
+    actual_pp: usize,
+    state: MatchResult,
+    id: usize,
+}
+
+impl WorkerStatus {
+
+    pub fn new(id: usize) -> Self {
+        WorkerStatus {
+            total_pp: 0,
+            actual_pp: 0,
+            state: MatchResult::Iddle,
+            id,
+        }
+    }
+
+    fn find(&self) -> bool {
+        match self.state {
+            Match(_) => true,
+            _ => false,
+        }
+    }
+
+    fn update(&mut self, msg: WorkerMsg) {
+        match msg {
+            WorkerMsg::Progress { id, actual_pp, total_pp } => {
+                self.actual_pp = actual_pp;
+                self.total_pp = total_pp;
+            }
+            _ => {}
+        }
+    }
 }
 
 pub struct PassphraseFinder {
+    workers: Option<Vec<Child>>,
+    workers_status: Option<Vec<WorkerStatus>>,
     secp: Secp256k1<All>,
     address: Address,
     mnemonic: Mnemonic,
     derivation_path: DerivationPath,
     passphrases: Vec<String>,
     indexes: Vec<u32>,
-    proc: u8,
+    proc: usize,
+    id: Option<usize>,
+    tx: Option<mpsc::Sender<String>>,
+    rx: Option<mpsc::Receiver<String>>,
+    found: bool,
+    pp: Option<String>,
 }
 
 impl PassphraseFinder {
@@ -32,10 +95,36 @@ impl PassphraseFinder {
         derivation_path: DerivationPath,
         passphrases: Vec<String>,
         indexes: Vec<u32>,
-        proc: u8,
+        proc: usize,
+        id: Option<usize>,
     ) -> Self {
         let secp = Secp256k1::new();
-        PassphraseFinder {
+        let workers: Option<Vec<Child>> = if proc == 1 {
+            None
+        } else {
+            let w: Vec<Child> = Vec::new();
+            Some(w)
+        };
+
+        let workers_status: Option<Vec<WorkerStatus>> = if proc == 1 {
+            None
+        } else {
+            let mut ws: Vec<WorkerStatus> = Vec::new();
+            for i in 0..proc {
+                let status = WorkerStatus{
+                    total_pp: 0,
+                    actual_pp: 0,
+                    state: MatchResult::Iddle,
+                    id: i,
+                };
+                ws.push(status);
+            }
+            Some(ws)
+        };
+
+        let ppf = PassphraseFinder {
+            workers,
+            workers_status,
             secp,
             address,
             mnemonic,
@@ -43,7 +132,14 @@ impl PassphraseFinder {
             passphrases,
             indexes,
             proc,
-        }
+            id,
+            tx: None,
+            rx: None,
+            found: false,
+            pp: None,
+        };
+
+        ppf
     }
 
     fn mnemonic_to_xpub(&self, mnemonic: &Mnemonic, passphrase: &str) -> Result<Xpub, CustomError> {
@@ -74,21 +170,297 @@ impl PassphraseFinder {
 
     }
 
-    pub fn start(&self) -> Result<MatchResult, CustomError> {
+    pub fn start(&mut self) -> Result<MatchResult, CustomError> {
+        if self.workers.is_none() {
+            self.standalone_start()
+        } else {
+            self.split_and_start()?;
+            Ok(self.monitor_workers()?)
+        }
+    }
+
+    /// Start this process as a worker
+    fn standalone_start(&self) -> Result<MatchResult, CustomError> {
         let total = self.passphrases.len();
-        println!("0/{} passphrases checked...", total);
+        if let Some(id) = self.id{
+            println!("[{}]0/{}", id.to_string(), total.to_string());
+        } else {
+            println!("0/{} passphrases checked...", total.to_string());
+        };
+
         for (idx, p) in self.passphrases.iter().enumerate() {
             if self.check_passphrase(p)? {
+                if let Some(id) = self.id {
+                    println!("[{}]found:{}", id, p);
+                }
                 return Ok(Match(p.clone()));
             }
 
             if idx % 10 == 0 {
-                // remove last line
-                print!("\x1B[1A\x1B[K");
-                println!("{}/{} passphrases checked...", idx, total);
+                if let Some(id) = self.id{
+                    println!("[{}]{}/{}", id.to_string(), idx.to_string(), total.to_string());
+                } else {
+                    // print!("\x1B[1A\x1B[K");
+                    println!("{}/{}({:.2}%) passphrases checked...", idx, total, (idx as f64 / total as f64) * 100.0);
+                };
             }
         }
-        println!("{}/{} passphrases checked...", total, total);
+        if let Some(id) = self.id{
+            println!("[{}]{}/{}", id.to_string(), total.to_string(), total.to_string());
+        } else {
+            println!("{}/{}(100%) passphrases checked...", total, total, );
+        };
+
+
         Ok(DoNotMatch)
+    }
+
+    /// Create several worker and start them, the actual process will only manage this workers
+    fn split_and_start(&mut self) -> Result<(), CustomError>{
+
+        if let Some(workers) = &mut self.workers {
+            let args: Vec<String> = env::args().collect();
+            let binary = format!("./{}", &args[0]);
+            let mut files : Vec<String> = Vec::new();
+
+            println!("Splitting jobs in {} workers...", self.proc.to_string());
+
+            // split passphrase dictionary into <self.proc> chunks
+            let chunk_size = (self.passphrases.len() + (self.proc - 1)) / self.proc;
+            for (i, chunk) in self.passphrases.chunks(chunk_size).enumerate() {
+                // write each chunk in a new file
+                let path = format!("worker_{}.pp", i.to_string());
+                files.push(path.clone());
+                let mut file = File::create(&path)
+                    .map_err(|_| CustomError::CannotWriteFile(path.clone()))?;
+
+                for s in chunk {
+                    writeln!(file, "{}", s).map_err(|_| CustomError::CannotWriteFile(path.clone()))?;
+                }
+
+                print!("[{}] ", i);
+                io::stdout().flush().unwrap();
+            }
+            println!(" ");
+            print!("\x1B[1A\x1B[K");
+            println!("Starting workers...");
+
+            // preparing channel
+            let (tx, rx) = mpsc::channel();
+            self.rx = Some(rx);
+
+            for (i, f) in files.iter().enumerate() {
+                let mut child = Command::new(&binary)
+                    .stdout(Stdio::piped())
+                    .arg("-a")
+                    .arg(self.address.to_string())
+                    .arg("-m")
+                    .arg(self.mnemonic.to_string())
+                    .arg("-i")
+                    .arg(serde_json::to_string(&self.indexes).unwrap())
+                    .arg("-d")
+                    .arg(self.derivation_path.to_string())
+                    .arg("-p")
+                    .arg(f)
+                    .arg("-w")
+                    .arg(i.to_string())
+                    .spawn().map_err(|_| CustomError::FailStartWorker)?;
+
+
+                let tx = tx.clone();
+                let stdout = child.stdout.take().expect("Child did not have a handle to stdout");
+
+                // Thread to 'map' stdout to mpsc::channel
+                thread::spawn(move || {
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines() {
+                        let line = line.expect("Could not read line from stdout");
+                        tx.send(line).expect("Could not send line to main thread");
+                    }
+                });
+
+                workers.push(child);
+
+                print!("[{}] ", i);
+                io::stdout().flush().unwrap();
+            };
+            println!(" ");
+
+            drop(tx); // Close the spare sending part of the channel, other tx sides are not closed here
+
+            Ok(())
+        } else {
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Monitor workers until they all stopped
+    fn monitor_workers(&mut self) -> Result<MatchResult, CustomError> {
+
+        if let Some(rx) = self.rx.take() {
+
+            // this is blocking until all tx end are not closed
+            // every tx will be closed when its emitting process will stop
+            for received in rx {
+                let stop_listening = self.handle_worker_msg(received)?;
+                if  stop_listening || self.found {
+                    break;
+                }
+            }
+
+            if !&self.found {
+                let s = &self.get_global_status();
+                print!("\x1B[1A\x1B[K");
+                println!("{}/{}({:.2}%) passphrases checked...", s.total_pp, s.total_pp, (s.total_pp as f64 / s.total_pp as f64) * 100.0);
+                Ok(DoNotMatch)
+            } else {
+                self.kill_processes();
+                if let Some(pp) = &self.pp {
+                    Ok(Match(pp.clone()))
+                } else {
+                    Ok(DoNotMatch)
+                }
+            }
+
+            // TODO: cleanup worker_<id>.pp files
+
+
+        } else {
+            Err(CustomError::NoWorkers)
+        }
+    }
+
+    fn parse_msg(&self, input: &str) -> Result<WorkerMsg, CustomError> {
+        let re1 = Regex::new(r"^\[(\d+)\](\d+)/(\d+)$")
+            .expect("static regex cannot fail");
+        let re2 = Regex::new(r"^\[(\d+)\]found:(.+)$")
+            .expect("static regex cannot fail");
+        let re3 = Regex::new(r"^\[\d+\].*$")
+            .expect("static regex cannot fail");
+
+        if let Some(data) = re1.captures(input) {
+            if &data[2] != &data[3] {
+                Ok(WorkerMsg::Progress {
+                    id: usize::from_str(&data[1])
+                        .map_err(|_| CustomError::CannotParseUSize)?,
+                    actual_pp: usize::from_str(&data[2])
+                        .map_err(|_| CustomError::CannotParseUSize)?,
+                    total_pp: usize::from_str(&data[3])
+                        .map_err(|_| CustomError::CannotParseUSize)?,
+                })
+            } else {
+                Ok(WorkerMsg::Ended)
+            }
+        } else if let Some(data) = re2.captures(input) {
+            Ok(WorkerMsg::Found {
+                id: usize::from_str(&data[1])
+                    .map_err(|_| CustomError::CannotParseUSize)?,
+                passphrase: data[2].to_string(),
+            })
+        } else if let Some(data) = re3.captures(input) {
+            println!("Raw.....................................");
+            Ok(WorkerMsg::Raw(input.to_string())
+            )
+        } else {
+            println!("Cannot parse worker msg input={}", input);
+            Err(CustomError::CannotParseWorkerMsg)
+        }
+    }
+
+    fn handle_worker_msg(&mut self, msg: String) -> Result<bool, CustomError>{
+
+        let msg =   self.parse_msg(&msg)?;
+        self.update_worker_status(msg);
+
+        // return true to stop listening subprocesses
+        if self.check_workers_status().is_some() {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn update_worker_status(&mut self, msg: WorkerMsg) {
+        match msg {
+            WorkerMsg::Progress { id, actual_pp, total_pp } => {
+                if let Some(workers_status) = &mut self.workers_status {
+                    workers_status[id].update(msg);
+                }
+                let s = self.get_global_status();
+                print!("\x1B[1A\x1B[K");
+                println!("{}/{}({:.2}%) passphrases checked...", s.actual_pp, s.total_pp, (s.actual_pp as f64 / s.total_pp as f64) * 100.0);
+            },
+
+            WorkerMsg::Found {id, passphrase} => {
+
+                // println!("Passphrase found '{}'", passphrase);
+                self.found = true;
+                self.pp = Some(passphrase);
+
+                // TODO: write found pp into file
+
+            },
+            _ => {}
+        }
+    }
+
+    fn get_global_status(&mut self) -> GlobalStatus {
+        if let Some(status) = &self.workers_status {
+            let mut actual = 0usize;
+            let mut total = 0usize;
+            for w in status.iter() {
+                actual += w.actual_pp;
+                total += w.total_pp;
+            }
+            GlobalStatus {actual_pp: actual, total_pp: total}
+        } else {
+            GlobalStatus {actual_pp: 0, total_pp: 0}
+        }
+
+
+    }
+
+    fn check_workers_status(&mut self) -> Option<WorkerMsg> {
+
+        if let Some(status) = &self.workers_status {
+            for s in  status.iter() {
+                match &s.state {
+                    Match(pp) => {
+                        return Some(WorkerMsg::Found { id: s.id, passphrase: pp.clone() });
+                    },
+                    _ => {}
+                }
+            };
+        };
+        // TODO: else if all workers stopped return
+        // Some(WorkerMsg::Ended)
+        // else return
+        None
+    }
+
+    fn kill_processes(&mut self) {
+        if let Some(workers) = &mut self.workers {
+            println!("Stopping all workers");
+            for worker in &mut *workers {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    let _ = &worker.kill(); // Sends SIGKILL
+                }
+
+                // For Windows:
+                #[cfg(windows)]
+                {
+                    let _ = worker.kill(); // Terminates the process
+                }
+            }
+            println!("Waiting to all workers stopped...");
+            for worker in workers {
+                _ = worker.wait();
+            }
+            println!("All workers have stopped.");
+        }
     }
 }

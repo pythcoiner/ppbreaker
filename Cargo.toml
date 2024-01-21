@@ -12,3 +12,4 @@ bitcoin = "0.31.1"
 bip39 = "2.0.0"
 clap = { version = "4.4.7", features = ["derive"]}
 serde_json = "1.0.111"
+regex = { version = "1.10.2", features = [] }
