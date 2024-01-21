@@ -29,7 +29,7 @@ impl fmt::Display for CustomError {
         match self {
             CustomError::NoAddress => write!(
                 f,
-                "No address to check against specified and address.txt not found!"
+                "No --address specified and address.txt not found!"
             ),
             CustomError::FileDoesNotExist(file) => write!(f, "File {file} does not exist!"),
             CustomError::CannotOpenFile(file) => write!(f, "Cannot open file {file}!"),

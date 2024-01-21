@@ -49,7 +49,7 @@ impl FromStr for AddressType {
 ///
 #[derive(Parser, Debug)]
 struct Cli {
-    /// Address to check against, if not defined, will check content of adress.txt.
+    /// Address to check against, if not defined, will check content of address.txt.
     #[arg(short, long)]
     address: Option<String>,
 
