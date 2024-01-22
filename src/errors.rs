@@ -55,7 +55,7 @@ impl fmt::Display for CustomError {
             CustomError::CannotParseUSize => write!(f, "Cannot parse usize from string"),
             CustomError::CannotTakeStdout => write!(f, "Cannot take stdout from worker"),
             CustomError::CannotRemoveFile(file) => write!(f, "Cannot remove file {}", file),
-            _ => write!(f, "Unimplemented error!"),
+            // _ => write!(f, "Unimplemented error!"),
         }
     }
 }

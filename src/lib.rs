@@ -58,21 +58,6 @@ struct WorkerStatus {
 }
 
 impl WorkerStatus {
-    pub fn new(id: usize) -> Self {
-        WorkerStatus {
-            total_pp: 0,
-            actual_pp: 0,
-            state: MatchResult::Iddle,
-            id,
-        }
-    }
-
-    fn find(&self) -> bool {
-        match self.state {
-            Match(_) => true,
-            _ => false,
-        }
-    }
 
     fn update(&mut self, msg: WorkerMsg) {
         match msg {
@@ -100,7 +85,6 @@ pub struct PassphraseFinder {
     indexes: Vec<u32>,
     proc: usize,
     id: Option<usize>,
-    tx: Option<mpsc::Sender<String>>,
     rx: Option<mpsc::Receiver<String>>,
     found: bool,
     pp: Option<String>,
@@ -152,7 +136,6 @@ impl PassphraseFinder {
             indexes,
             proc,
             id,
-            tx: None,
             rx: None,
             found: false,
             pp: None,
@@ -401,7 +384,7 @@ impl PassphraseFinder {
                 id: usize::from_str(&data[1]).map_err(|_| CustomError::CannotParseUSize)?,
                 passphrase: data[2].to_string(),
             })
-        } else if let Some(data) = re3.captures(input) {
+        } else if let Some(_data) = re3.captures(input) {
             println!("Raw.....................................");
             Ok(WorkerMsg::Raw(input.to_string()))
         } else {
@@ -433,7 +416,7 @@ impl PassphraseFinder {
                     workers_status[id].update(msg);
                 }
                 let s = self.get_global_status();
-                let eta = self.estimate_eta(((s.actual_pp as f64 / s.total_pp as f64)));
+                let eta = self.estimate_eta(s.actual_pp as f64 / s.total_pp as f64);
                 print!("\x1B[1A\x1B[K");
                 if let Some(eta) = eta {
                     println!(
@@ -510,17 +493,9 @@ impl PassphraseFinder {
         if let Some(workers) = &mut self.workers {
             println!("Stopping all workers");
             for worker in &mut *workers {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::CommandExt;
-                    let _ = &worker.kill(); // Sends SIGKILL
-                }
 
-                // For Windows:
-                #[cfg(windows)]
-                {
-                    let _ = worker.kill(); // Terminates the process
-                }
+                let _ = &worker.kill(); // Sends SIGKILL
+
             }
             println!("Waiting to all workers stopped...");
             for worker in workers {
@@ -547,7 +522,7 @@ impl PassphraseFinder {
                 .unwrap()
                 .as_secs_f64();
             let eta = ((1.0 / elapsed) * duration) - duration;
-            let mut eta = eta as u32;;
+            let mut eta = eta as u32;
 
             let days = eta / 86_400;
             eta -= days * 86_400;
