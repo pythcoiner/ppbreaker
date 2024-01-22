@@ -97,10 +97,9 @@ fn get_file_handle(path: &str) -> Result<BufReader<File>, CustomError> {
         .parent()
         .expect("should not fail!")
         .join(path);
-    let file_path = file_path;
 
     if !file_path.exists() {
-        return Err(CustomError::FileDoesNotExist(path.to_string()));
+        Err(CustomError::FileDoesNotExist(path.to_string()))
     } else {
         // Open the file in read-only mode
         let file =
@@ -138,9 +137,9 @@ fn parse_index(index: &str) -> Result<Vec<u32>, CustomError> {
 }
 
 fn parse_address(address: Option<String>) -> Result<Address<NetworkUnchecked>, CustomError> {
-    if address.is_some() {
+    if let Some(addr) = &address {
         // if address passed, parse it
-        Address::from_str(&address.unwrap()).map_err(|_| CustomError::WrongAddress)
+        Ok(Address::from_str(addr).map_err(|_| CustomError::WrongAddress)?)
     } else {
         // else check if address.txt exist
         let mut file = get_file_handle("address.txt").map_err(|_| CustomError::NoAddress)?;
@@ -152,7 +151,7 @@ fn parse_address(address: Option<String>) -> Result<Address<NetworkUnchecked>, C
             > 0
         {
             // parse address
-            Address::from_str(&first_line.trim()).map_err(|_| CustomError::WrongAddress)
+            Address::from_str(first_line.trim()).map_err(|_| CustomError::WrongAddress)
         } else {
             // else return no address passed
             Err(CustomError::NoAddress)
@@ -164,9 +163,9 @@ fn parse_mnemonic(
     mnemonic: Option<String>,
     mnemonic_file: Option<String>,
 ) -> Result<Mnemonic, CustomError> {
-    if mnemonic.is_some() {
+    if let Some(mnemonic) = &mnemonic {
         // if mnemonic passed, parse it
-        Mnemonic::from_str(&mnemonic.unwrap()).map_err(|_| CustomError::WrongMnemonic)
+        Mnemonic::from_str(mnemonic).map_err(|_| CustomError::WrongMnemonic)
     } else if mnemonic_file.is_some() {
         // else if --mnemonic-file passed, try to parse it
         let mut file =
@@ -179,7 +178,7 @@ fn parse_mnemonic(
             > 0
         {
             // parse mnemonic
-            Mnemonic::from_str(&first_line.trim()).map_err(|_| CustomError::WrongMnemonic)
+            Mnemonic::from_str(first_line.trim()).map_err(|_| CustomError::WrongMnemonic)
         } else {
             // else return wrong mnemonic
             Err(CustomError::WrongMnemonic)
@@ -223,15 +222,11 @@ fn parse_passphrases(
         println!("0 passphrases loaded...");
     }
 
-    for line in file.lines() {
-        if line.is_ok() {
-            passphrases.push(line.unwrap());
-            if passphrases.len() % 10_000 == 0 {
-                if !mute {
-                    print!("\x1B[1A\x1B[K");
-                    println!("{} passphrases loaded...", passphrases.len());
-                }
-            }
+    for line in file.lines().flatten() {
+        passphrases.push(line);
+        if passphrases.len() % 10_000 == 0  && !mute{
+                print!("\x1B[1A\x1B[K");
+                println!("{} passphrases loaded...", passphrases.len());
         }
     }
     if !mute {
@@ -269,7 +264,7 @@ fn main() -> Result<(), String> {
         worker_id,
     );
 
-    return if let MatchResult::Match(pp) = ppb.start()? {
+    if let MatchResult::Match(pp) = ppb.start()? {
         if worker_id.is_none() {
             println!("Passphrase found: {pp}");
         }
@@ -280,5 +275,5 @@ fn main() -> Result<(), String> {
             println!("Passphrase not found!");
         }
         Ok(())
-    };
+    }
 }

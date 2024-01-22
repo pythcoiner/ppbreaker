@@ -27,10 +27,9 @@ pub enum CustomError {
 impl fmt::Display for CustomError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CustomError::NoAddress => write!(
-                f,
-                "No --address specified and address.txt not found!"
-            ),
+            CustomError::NoAddress => {
+                write!(f, "No --address specified and address.txt not found!")
+            }
             CustomError::FileDoesNotExist(file) => write!(f, "File {file} does not exist!"),
             CustomError::CannotOpenFile(file) => write!(f, "Cannot open file {file}!"),
             CustomError::CannotReadLine(file) => write!(f, "Cannot read line in {file}!"),
@@ -48,7 +47,7 @@ impl fmt::Display for CustomError {
             CustomError::DeriveError => write!(f, "Cannot derive from Xpriv!"),
             CustomError::FailStartWorker => write!(f, "Fail to start subprocess!"),
             CustomError::CannotWriteFile(file) => {
-                write!(f, "Cannot write file {}", file.to_string())
+                write!(f, "Cannot write file {}", file)
             }
             CustomError::NoWorkers => write!(f, "No workers!"),
             CustomError::CannotParseWorkerMsg => write!(f, "Cannot parse message from worker"),

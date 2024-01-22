@@ -14,8 +14,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::sync::mpsc;
-use std::{env, fs, io, thread};
 use std::time::SystemTime;
+use std::{env, fs, io, thread};
 
 pub enum MatchResult {
     Match(String),
@@ -56,18 +56,14 @@ struct WorkerStatus {
 }
 
 impl WorkerStatus {
-
     fn update(&mut self, msg: WorkerMsg) {
-        match msg {
-            WorkerMsg::Progress {
-                id: _,
-                actual_pp,
-                total_pp,
-            } => {
-                self.actual_pp = actual_pp;
-                self.total_pp = total_pp;
-            }
-            _ => {}
+        if let WorkerMsg::Progress {
+            id: _,
+            actual_pp,
+            total_pp
+        } = msg {
+            self.actual_pp = actual_pp;
+            self.total_pp = total_pp;
         }
     }
 }
@@ -122,7 +118,7 @@ impl PassphraseFinder {
             Some(ws)
         };
 
-        let ppf = PassphraseFinder {
+        PassphraseFinder {
             workers,
             workers_status,
             secp,
@@ -137,9 +133,8 @@ impl PassphraseFinder {
             found: false,
             pp: None,
             start_time: None,
-        };
+        }
 
-        ppf
     }
 
     fn mnemonic_to_xpub(&self, mnemonic: &Mnemonic, passphrase: &str) -> Result<Xpub, CustomError> {
@@ -154,10 +149,10 @@ impl PassphraseFinder {
     fn get_address(&self, xpub: &Xpub, index: u32) -> Result<Address, CustomError> {
         let idx = ChildNumber::from_normal_idx(index).unwrap();
         let public_key = xpub.derive_pub(&self.secp, &[idx]).unwrap().public_key;
-        Ok(Address::p2wpkh(&public_key.try_into().unwrap(), Network::Bitcoin).unwrap())
+        Ok(Address::p2wpkh(&public_key.into(), Network::Bitcoin).unwrap())
     }
 
-    fn check_passphrase(&self, passphrase: &String) -> Result<bool, CustomError> {
+    fn check_passphrase(&self, passphrase: &str) -> Result<bool, CustomError> {
         let xpub = self.mnemonic_to_xpub(&self.mnemonic, passphrase)?;
         for i in &self.indexes {
             let address = &self.get_address(&xpub, i.to_owned())?;
@@ -181,9 +176,9 @@ impl PassphraseFinder {
     fn standalone_start(&self) -> Result<MatchResult, CustomError> {
         let total = self.passphrases.len();
         if let Some(id) = self.id {
-            println!("[{}]0/{}", id.to_string(), total.to_string());
+            println!("[{}]0/{}", id, total);
         } else {
-            println!("0/{} passphrases checked...", total.to_string());
+            println!("0/{} passphrases checked...", total);
         };
 
         for (idx, p) in self.passphrases.iter().enumerate() {
@@ -198,9 +193,9 @@ impl PassphraseFinder {
                 if let Some(id) = self.id {
                     println!(
                         "[{}]{}/{}",
-                        id.to_string(),
-                        idx.to_string(),
-                        total.to_string()
+                        id,
+                        idx,
+                        total
                     );
                 } else {
                     // print!("\x1B[1A\x1B[K");
@@ -216,9 +211,9 @@ impl PassphraseFinder {
         if let Some(id) = self.id {
             println!(
                 "[{}]{}/{}",
-                id.to_string(),
-                total.to_string(),
-                total.to_string()
+                id,
+                total,
+                total
             );
         } else {
             println!("{}/{}(100%) passphrases checked...", total, total,);
@@ -234,13 +229,13 @@ impl PassphraseFinder {
             let binary = format!("./{}", &args[0]);
             let mut files: Vec<String> = Vec::new();
 
-            println!("Splitting jobs in {} workers...", self.proc.to_string());
+            println!("Splitting jobs in {} workers...", self.proc);
 
             // split passphrase dictionary into <self.proc> chunks
             let chunk_size = (self.passphrases.len() + (self.proc - 1)) / self.proc;
             for (i, chunk) in self.passphrases.chunks(chunk_size).enumerate() {
                 // write each chunk in a new file
-                let path = format!("worker_{}.pp", i.to_string());
+                let path = format!("worker_{}.pp", i);
                 files.push(path.clone());
                 let mut file =
                     File::create(&path).map_err(|_| CustomError::CannotWriteFile(path.clone()))?;
@@ -310,7 +305,7 @@ impl PassphraseFinder {
             Ok(())
         } else {
             {
-                return Ok(());
+                Ok(())
             }
         }
     }
@@ -332,13 +327,12 @@ impl PassphraseFinder {
             if !&self.found {
                 let s = &self.get_global_status();
 
-
                 print!("\x1B[1A\x1B[K");
                 println!(
                     "{}/{}({:.2}%) passphrases checked...",
                     s.total_pp,
                     s.total_pp,
-                    (s.total_pp as f64 / s.total_pp as f64) * 100.0
+                    ((s.actual_pp as f64) / (s.total_pp as f64)) * 100.0
                 );
                 self.cleanup()?;
                 Ok(DoNotMatch)
@@ -365,7 +359,7 @@ impl PassphraseFinder {
         let re3 = Regex::new(r"^\[\d+\].*$").expect("static regex cannot fail");
 
         if let Some(data) = re1.captures(input) {
-            if &data[2] != &data[3] {
+            if data[2] != data[3] {
                 Ok(WorkerMsg::Progress {
                     id: usize::from_str(&data[1]).map_err(|_| CustomError::CannotParseUSize)?,
                     actual_pp: usize::from_str(&data[2])
@@ -468,14 +462,10 @@ impl PassphraseFinder {
     fn check_workers_status(&mut self) -> Option<WorkerMsg> {
         if let Some(status) = &self.workers_status {
             for s in status.iter() {
-                match &s.state {
-                    Match(pp) => {
-                        return Some(WorkerMsg::Found {
-                            passphrase: pp.clone(),
-                        });
-                    }
-                    _ => {}
+                if let Match(pp) = &s.state {
+                    return Some(WorkerMsg::Found {passphrase: pp.clone(),});
                 }
+
             }
         };
         // TODO: else if all workers stopped return
@@ -488,9 +478,7 @@ impl PassphraseFinder {
         if let Some(workers) = &mut self.workers {
             println!("Stopping all workers");
             for worker in &mut *workers {
-
                 let _ = &worker.kill(); // Sends SIGKILL
-
             }
             println!("Waiting to all workers stopped...");
             for worker in workers {
@@ -500,10 +488,10 @@ impl PassphraseFinder {
         }
     }
 
-    fn cleanup(&self) -> Result<(), CustomError>{
+    fn cleanup(&self) -> Result<(), CustomError> {
         if let Some(workers) = &self.workers {
             for i in 0..workers.len() {
-                let path = format!("worker_{}.pp", i.to_string());
+                let path = format!("worker_{}.pp", i);
                 fs::remove_file(&path).map_err(|_| CustomError::CannotRemoveFile(path))?;
             }
         }
@@ -512,7 +500,7 @@ impl PassphraseFinder {
 
     fn estimate_eta(&self, elapsed: f64) -> Option<Eta> {
         if let Some(start) = self.start_time {
-            let duration =SystemTime::now()
+            let duration = SystemTime::now()
                 .duration_since(start)
                 .unwrap()
                 .as_secs_f64();
@@ -525,14 +513,12 @@ impl PassphraseFinder {
             eta -= hours * 3600;
             let minutes = eta / 60;
             let seconds = eta - (minutes * 60);
-            Some (
-                Eta {
-                    days,
-                    hours,
-                    minutes,
-                    seconds
-                }
-            )
+            Some(Eta {
+                days,
+                hours,
+                minutes,
+                seconds,
+            })
         } else {
             None
         }
