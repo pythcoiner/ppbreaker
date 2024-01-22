@@ -31,7 +31,6 @@ enum WorkerMsg {
         total_pp: usize,
     },
     Found {
-        id: usize,
         passphrase: String,
     },
     Raw(String),
@@ -54,7 +53,6 @@ struct WorkerStatus {
     total_pp: usize,
     actual_pp: usize,
     state: MatchResult,
-    id: usize,
 }
 
 impl WorkerStatus {
@@ -62,7 +60,7 @@ impl WorkerStatus {
     fn update(&mut self, msg: WorkerMsg) {
         match msg {
             WorkerMsg::Progress {
-                id,
+                id: _,
                 actual_pp,
                 total_pp,
             } => {
@@ -113,12 +111,11 @@ impl PassphraseFinder {
             None
         } else {
             let mut ws: Vec<WorkerStatus> = Vec::new();
-            for i in 0..proc {
+            for _ in 0..proc {
                 let status = WorkerStatus {
                     total_pp: 0,
                     actual_pp: 0,
                     state: MatchResult::Iddle,
-                    id: i,
                 };
                 ws.push(status);
             }
@@ -381,7 +378,6 @@ impl PassphraseFinder {
             }
         } else if let Some(data) = re2.captures(input) {
             Ok(WorkerMsg::Found {
-                id: usize::from_str(&data[1]).map_err(|_| CustomError::CannotParseUSize)?,
                 passphrase: data[2].to_string(),
             })
         } else if let Some(_data) = re3.captures(input) {
@@ -409,8 +405,8 @@ impl PassphraseFinder {
         match msg {
             WorkerMsg::Progress {
                 id,
-                actual_pp,
-                total_pp,
+                actual_pp: _,
+                total_pp: _,
             } => {
                 if let Some(workers_status) = &mut self.workers_status {
                     workers_status[id].update(msg);
@@ -438,7 +434,7 @@ impl PassphraseFinder {
                 }
             }
 
-            WorkerMsg::Found { id, passphrase } => {
+            WorkerMsg::Found { passphrase } => {
                 // println!("Passphrase found '{}'", passphrase);
                 self.found = true;
                 self.pp = Some(passphrase);
@@ -475,7 +471,6 @@ impl PassphraseFinder {
                 match &s.state {
                     Match(pp) => {
                         return Some(WorkerMsg::Found {
-                            id: s.id,
                             passphrase: pp.clone(),
                         });
                     }
