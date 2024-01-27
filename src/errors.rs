@@ -22,6 +22,8 @@ pub enum CustomError {
     CannotParseUSize,
     CannotTakeStdout,
     CannotRemoveFile(String),
+    NoChannel,
+    CannotSendMsg,
 }
 
 impl fmt::Display for CustomError {
@@ -54,6 +56,8 @@ impl fmt::Display for CustomError {
             CustomError::CannotParseUSize => write!(f, "Cannot parse usize from string"),
             CustomError::CannotTakeStdout => write!(f, "Cannot take stdout from worker"),
             CustomError::CannotRemoveFile(file) => write!(f, "Cannot remove file {}", file),
+            CustomError::NoChannel => write!(f, "mpsc channel <tx> missing on worker side"),
+            CustomError::CannotSendMsg => write!(f, "Cannot send message to channel"),
             // _ => write!(f, "Unimplemented error!"),
         }
     }

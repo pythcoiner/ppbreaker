@@ -7,7 +7,7 @@ use bip39::Mnemonic;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::bip32::DerivationPath;
 use bitcoin::Address;
-use ppfinder::{CustomError, MatchResult, PassphraseFinder};
+use ppfinder::{CustomError, PassphraseFinder, WorkerState};
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -224,9 +224,9 @@ fn parse_passphrases(
 
     for line in file.lines().flatten() {
         passphrases.push(line);
-        if passphrases.len() % 10_000 == 0  && !mute{
-                print!("\x1B[1A\x1B[K");
-                println!("{} passphrases loaded...", passphrases.len());
+        if passphrases.len() % 10_000 == 0 && !mute {
+            print!("\x1B[1A\x1B[K");
+            println!("{} passphrases loaded...", passphrases.len());
         }
     }
     if !mute {
@@ -261,13 +261,11 @@ fn main() -> Result<(), String> {
         passphrases,
         index,
         cli.processes,
-        worker_id,
+        100,
     );
 
-    if let MatchResult::Match(pp) = ppb.start()? {
-        if worker_id.is_none() {
-            println!("Passphrase found: {pp}");
-        }
+    if let WorkerState::Match(data) = ppb.start()? {
+        println!("Passphrase found: {}", data.passphrase);
         // TODO: write result into a file 'pp.found'
         Ok(())
     } else {
